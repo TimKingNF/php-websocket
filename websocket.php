@@ -1,5 +1,6 @@
 <?php
-class WebSocketClient {
+class WebSocketClient
+{
 	public $id; # id编号
 	public $socket; # socket
 	public $handshake; # 是否建立连接
@@ -12,7 +13,8 @@ class WebSocketClient {
 	public $params; # 注册的自定义参数将会在这里返回
 }
 
-class WebSocketRouter {
+class WebSocketRouter
+{
 	public $router; # 路由
 
 	public function __call($_method, $_arguments) {
@@ -27,19 +29,30 @@ class WebSocketRouter {
 	public function onSendMessage(WebSocketClient $client, $msg) {}
 }
 
-class WebSocket {
+class WebSocket
+{
 	private $master;
-	private $clients = array();
-	private $sockets = array();
-	private $routers = array(); # 注册路由与方法
+	private $clients = [];
+	private $sockets = [];
+	private $routers = []; # 注册路由与方法
 
 	protected $address = "localhost";
 	protected $port = 8080;
 
-	public function __construct($address, $port) {
+	/**
+     * WebSocket constructor.
+     * @param $address
+     * @param $port
+     */
+	public function __construct($address, $port)
+	{
+		if (method_exists($this, 'init')) {
+            $this->init();
+        }
+
 		if ($address == 'localhost') {
 			$this->address = $address;
-		} else if (preg_match('/^[\d\.]*$/is', $address)) {
+		} elseif (preg_match('/^[\d\.]*$/is', $address)) {
 			$this->address = long2ip(ip2long($address));
 		} else {
 			$this->address = $port;
@@ -57,7 +70,15 @@ class WebSocket {
 		$this->log("start websocket server in $address:$port");
 	}
 
-	private function create_socket() {
+	public function init()
+    {
+    }
+
+	/**
+     * @return resource
+     */
+	private function create_socket()
+	{
 		$master = socket_create(AF_INET, SOCK_STREAM, SOL_TCP) or
 		die("socket_create() failed:" . socket_strerror(socket_last_error())); # IPV4协议， 字节流式， TCP协议
 
@@ -72,7 +93,20 @@ class WebSocket {
 		return $master;
 	}
 
-	private function connect($clientSocket) {
+	private function reverseInt64($str)
+    {
+        if (strlen($str) != 8) {
+            return 0;
+        }
+        $val = 0;
+        for ($i = 0; $i < 8; ++$i) {
+            $val |= ord($str[$i]) << (7 - $i) * 8;
+        }
+        return $val;
+    }
+
+	private function connect($clientSocket)
+	{
 		$client = new WebSocketClient();
 		$client->id = uniqid();
 		$client->socket = $clientSocket;
@@ -81,7 +115,8 @@ class WebSocket {
 	}
 
 	# 解析参数，获取唯一标识还有用户操作类型
-	private function getHeaders($req) {
+	private function getHeaders($req)
+	{
 		$r = $h = $o = $key = null;
 		if (preg_match("/GET (.*) HTTP/", $req, $match)) {
 			$r = $match[1];
@@ -99,11 +134,12 @@ class WebSocket {
 			$key = $match[1];
 		}
 
-		return array($r, $h, $o, $key);
+		return [$r, $h, $o, $key];
 	}
 
 	# 数据封装
-	protected function wrap($msg = "", $opcode = 0x1) {
+	protected function wrap($msg = "", $opcode = 0x1)
+	{
 		//默认控制帧为0x1（文本数据）
 		$firstByte = 0x80 | $opcode;
 		$encodedata = null;
@@ -111,7 +147,7 @@ class WebSocket {
 
 		if (0 <= $len && $len <= 125) {
 			$encodedata = chr(0x81) . chr($len) . $msg;
-		} else if (126 <= $len && $len <= 0xFFFF) {
+		} elseif (126 <= $len && $len <= 0xFFFF) {
 			$low = $len & 0x00FF;
 			$high = ($len & 0xFF00) >> 8;
 			$encodedata = chr($firstByte) . chr(0x7E) . chr($high) . chr($low) . $msg;
@@ -121,40 +157,43 @@ class WebSocket {
 	}
 
 	# 数据解包
-	protected function unwrap($clientSocket, $msg = "") {
+	protected function unwrap($clientSocket, $msg = "")
+	{
 		$opcode = ord(substr($msg, 0, 1)) & 0x0F;
-		$payloadlen = ord(substr($msg, 1, 1)) & 0x7F;
-		$ismask = (ord(substr($msg, 1, 1)) & 0x80) >> 7;
-		$maskkey = null;
-		$oridata = null;
-		$decodedata = null;
+        $payloadlen = ord(substr($msg, 1, 1)) & 0x7F;
+        $ismask = (ord(substr($msg, 1, 1)) & 0x80) >> 7;
+        $maskkey = null;
+        $oridata = null;
+        $decodedata = null;
 
-		//关闭连接
-		if ($ismask != 1 || $opcode == 0x8) {
-			$this->disconnect($clientSocket);
-			return null;
-		}
+        //关闭连接
+        if ($ismask != 1 || $opcode == 0x8) {
+            $this->disconnect($client_socket);
+            return null;
+        }
 
-		//获取掩码密钥和原始数据
-		if ($payloadlen <= 125 && $payloadlen >= 0) {
-			$maskkey = substr($msg, 2, 4);
-			$oridata = substr($msg, 6);
-		} else if ($payloadlen == 126) {
-			$maskkey = substr($msg, 4, 4);
-			$oridata = substr($msg, 8);
-		} else if ($payloadlen == 127) {
-			$maskkey = substr($msg, 10, 4);
-			$oridata = substr($msg, 14);
-		}
-		$len = strlen($oridata);
-		for ($i = 0; $i < $len; $i++) {
-			$decodedata .= $oridata[$i] ^ $maskkey[$i % 4];
-		}
-		return $decodedata;
+        //获取掩码密钥和原始数据
+        if ($payloadlen <= 125 && $payloadlen >= 0) {
+            $maskkey = substr($msg, 2, 4);
+            $oridata = substr($msg, 6, $payloadlen);
+        } elseif ($payloadlen == 126) {
+            $payloadlen = (ord(substr($msg, 2, 1)) << 8) | ord(substr($msg, 3, 1));
+            $maskkey = substr($msg, 4, 4);
+            $oridata = substr($msg, 8, $payloadlen);
+        } elseif ($payloadlen == 127) {
+            $payloadlen = $this->reverseInt64(substr(2, 8));
+            $maskkey = substr($msg, 10, 4);
+            $oridata = substr($msg, 14, $payloadlen);
+        }
+        for ($i = 0; $i < $payloadlen; $i++) {
+            $decodedata .= $oridata[$i] ^ $maskkey[$i % 4];
+        }
+        return $decodedata;
 	}
 
 	# 协议升级与路由过滤
-	private function upgrade(WebSocketClient &$client, $buffer) {
+	private function upgrade(WebSocketClient &$client, $buffer)
+	{
 		list($resource, $host, $origin, $key) = $this->getHeaders($buffer);
 
 		# 检查路由是否已经被注册，解析参数，否则不允许连接
@@ -180,7 +219,7 @@ class WebSocket {
 	private static function checkUrlMatch($regx, $rule) {
 		$m1 = explode('/', $regx);
 		$m2 = explode('/', $rule);
-		$var = array();
+		$var = [];
 		foreach ($m2 as $key => $val) {
 			if (0 === strpos($val, '[:')) {
 				$val = substr($val, 1, -1);
